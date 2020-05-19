@@ -1,132 +1,98 @@
-import React, {Component} from 'react';
-import {BrowserRouter, Route, Redirect} from 'react-router-dom';
-
-import AppRouter from './AppRouter';
-import Search from './Search';
-import Shelf from './Shelf';
-
-import * as BooksAPI from './BooksAPI.js';
-
+import React, { Component } from 'react';
+import { Route } from 'react-router-dom';
+import { debounce } from 'throttle-debounce';
+import * as BooksAPI from './BooksAPI';
 import './App.css';
+import ListBooks from './ListBooks';
+import SearchBooks from './SearchBooks';
 
-class App extends Component {
-  constructor(props) {
-    super(props);
-    this.updateBooks = this.updateBooks.bind(this);
-    this.searchBooks = this.searchBooks.bind(this);
-
-    this.state = {
-      books: [],
-      searchResults: [],
-    };
-  }
-
-  componentDidMount() {
-    BooksAPI.getAll().then(books => {
-      this.setState({books});
-    });
-  }
-
-  updateBooks(book, shelf) {
-    BooksAPI.update(book, shelf);
-    // Find index of book based on comparison of id's
-    const index = this.state.books.findIndex(
-      shelfedBook => shelfedBook.id === book.id,
-    );
-    const {books} = this.state;
-
-    // Handle when new book is added with no index resulting in a '-1' index
-    if (index === -1) {
-      this.setState({
-        books: [...books, {...book, shelf: shelf}],
-      });
-    }
-
-    if (index !== -1) {
-      this.setState({
-        // Get all books up to the book we want to update
-        books: [
-          ...books.slice(0, index),
-          // Update book shelf
-          {...book, shelf: shelf},
-          // Append all books after book we want to update
-          ...books.slice(index + 1),
-        ],
-      });
-    }
-  }
-
-  searchBooks(query) {
-    BooksAPI.search(query, 2)
-      .then(searchResults => {
-        this.state.books.forEach(book => {
-          // return index of book if exists in search results
-          const index = searchResults.findIndex(
-            searchResult => searchResult.id === book.id,
-          );
-          if (index !== -1) {
-            searchResults[index].shelf = book.shelf;
-          }
-        });
-        searchResults && this.setState({searchResults});
+const bookshelves = [
+  { key: 'currentlyReading', name: 'Currently Reading' },
+  { key: 'wantToRead', name: 'Want to Read' },
+  { key: 'read', name: 'Read' }
+];
+class BooksApp extends Component {
+  state = {
+    myBooks: [],
+    searchBooks: [],
+    error: false
+  };
+  componentDidMount = () => {
+    BooksAPI.getAll()
+      .then(books => {
+        this.setState({ myBooks: books });
       })
-      .catch(e => {
-        Promise.resolve();
+      .catch(err => {
+        console.log(err);
+        this.setState({ error: true });
       });
-  }
+  };
+  moveBook = (book, shelf) => {
+    BooksAPI.update(book, shelf).catch(err => {
+      console.log(err);
+      this.setState({ error: true });
+    });
+    if (shelf === 'none') {
+      this.setState(prevState => ({
+        myBooks: prevState.myBooks.filter(b => b.id !== book.id)
+      }));
+    } else {
+      book.shelf = shelf;
+      this.setState(prevState => ({
+        myBooks: prevState.myBooks.filter(b => b.id !== book.id).concat(book)
+      }));
+    }
+  };
+  searchForBooks = debounce(300, false, query => {
+    if (query.length > 0) {
+      BooksAPI.search(query).then(books => {
+        if (books.error) {
+          this.setState({ searchBooks: [] });
+        } else {
+          this.setState({ searchBooks: books });
+        }
+      });
+    } else {
+      this.setState({ searchBooks: [] });
+    }
+  });
+  resetSearch = () => {
+    this.setState({ searchBooks: [] });
+  };
 
   render() {
-    let shelves = [
-      {
-        shelfName: 'currentlyReading',
-        className: 'currently-reading',
-        path: '/reading',
-      },
-      {
-        shelfName: 'wantToRead',
-        className: 'want-to-read',
-        path: '/want',
-      },
-      {
-        shelfName: 'read',
-        className: 'already-read',
-        path: '/read',
-      },
-    ];
-
+    const { myBooks, searchBooks, error } = this.state;
+    if (error) {
+      return <div>Network error. Please try again later.</div>;
+    }
     return (
-      <BrowserRouter>
-        <div className="app">
-          {shelves.map(shelf => {
-            return (
-              <AppRouter path={shelf.path} key={shelf.shelfName}>
-                <div className="shelf-wrapper">
-                  <Shelf
-                    className={'shelf ' + shelf.className}
-                    shelfName={shelf.shelfName}
-                    books={this.state.books}
-                    updateBooks={this.updateBooks}
-                  />
-                </div>
-              </AppRouter>
-            );
-          })}
-          <Route
-            exact
-            path="/search"
-            render={() =>
-              <Search
-                books={this.state.books}
-                searchBooks={this.searchBooks}
-                searchResults={this.state.searchResults}
-                updateBooks={this.updateBooks}
-              />}
-          />
-          <Route exact path="/" render={() => <Redirect to="/reading" />} />
-        </div>
-      </BrowserRouter>
+      <div className="app">
+        <Route
+          exact
+          path="/"
+          render={() => (
+            <ListBooks
+              bookshelves={bookshelves}
+              books={myBooks}
+              onMove={this.moveBook}
+            />
+          )}
+        />
+        <Route
+          path="/search"
+          render={() => (
+            <SearchBooks
+              searchBooks={searchBooks}
+              myBooks={myBooks}
+              onSearch={this.searchForBooks}
+              onMove={this.moveBook}
+              onResetSearch={this.resetSearch}
+            />
+          )}
+        />
+      </div>
     );
   }
 }
 
-export default App;
+export default BooksApp;
